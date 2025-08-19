@@ -1,87 +1,65 @@
 from telegram import Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
-import sqlite3
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# 🔑 توکن رباتتو اینجا بزار
-TOKEN = "7981388986:AAE3xI26bTu7WJjTa9vx_svYrfVHbqBE4RU"
+# توکن ربات مستقیم
+TOKEN = "7981388986:AAE3xI26bTu7WJjTa9vx_svYrfVHbqBE4RU"  # ← اینو با توکن خودت عوض کن
 
-# 📦 دیتابیس برای ذخیره پیام‌ها
-conn = sqlite3.connect("levels.db", check_same_thread=False)
-cursor = conn.cursor()
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS users (
-    chat_id INTEGER,
-    user_id INTEGER,
-    username TEXT,
-    messages INTEGER,
-    PRIMARY KEY (chat_id, user_id)
-)
-""")
-conn.commit()
+# URL ربات روی Render
+WEBHOOK_URL = f"https://my-levelup-bot.onrender.com/{TOKEN}"
 
-# 🎯 شمارش پیام و لول آپ
-async def level_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
-        return
-    
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
-    username = update.message.from_user.username or update.message.from_user.first_name
+# پورت Render
+import os
+PORT = int(os.environ.get("PORT", 5000))
 
-    # گرفتن تعداد پیام‌ها
-    cursor.execute("SELECT messages FROM users WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-    row = cursor.fetchone()
+# دیتابیس ساده لول ها
+users = {}  # ساختار: {user_id: {"name": username, "xp": 0, "level": 1}}
 
-    if row:
-        messages = row[0] + 1
-        cursor.execute(
-            "UPDATE users SET messages=?, username=? WHERE chat_id=? AND user_id=?",
-            (messages, username, chat_id, user_id)
-        )
-    else:
-        messages = 1
-        cursor.execute(
-            "INSERT INTO users (chat_id, user_id, username, messages) VALUES (?, ?, ?, ?)",
-            (chat_id, user_id, username, messages)
-        )
-    conn.commit()
+LEVEL_XP = 10  # هر 10 پیام، لول آپ
 
-    # چک کردن لول
-    if messages % 10 == 0:
-        level = messages // 10
-        text = (
-            f"🚀💥 بــــــــــوم!\n"
-            f"🎉 تبرییییک بهت @{username}\n\n"
-            f"🔥 تو به لول {level} رسیدی!\n"
-            f"😎 برو جلو قهرمان 💪"
-        )
-        await update.message.reply_text(text)
+# تابع برای لول آپ
+def add_xp(user_id, username):
+    if user_id not in users:
+        users[user_id] = {"name": username, "xp": 0, "level": 1}
+    users[user_id]["xp"] += 1
+    if users[user_id]["xp"] >= LEVEL_XP:
+        users[user_id]["level"] += 1
+        users[user_id]["xp"] = 0
+        return users[user_id]["level"]
+    return None
 
-# 🏆 دستور لیدربرد
+# دستورات ربات
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("سلام! ربات Level Up فعال شد 😎")
+
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    cursor.execute(
-        "SELECT username, messages FROM users WHERE chat_id=? ORDER BY messages DESC LIMIT 10",
-        (chat_id,)
-    )
-    rows = cursor.fetchall()
-
-    if not rows:
-        await update.message.reply_text("📭 هنوز کسی تو این گپ فعالیت نکرده!")
+    if not users:
+        await update.message.reply_text("🏆 هنوز کسی فعالیت نداشته!")
         return
-
-    text = "👑🏆 لیدربرد تاپ 10 بازیکن گپ 🏆👑\n⚡ اینا غولای چت هستن ⚡\n\n"
-    for i, (username, messages) in enumerate(rows, start=1):
-        level = messages // 10
-        text += f"{i}. ✨ @{username} → 🌟 لول {level}\n"
-
+    # مرتب سازی بر اساس level
+    top_users = sorted(users.items(), key=lambda x: x[1]["level"], reverse=True)[:10]
+    text = "🏆 لیدربرد ۱۰ نفر برتر:\n\n"
+    for i, (uid, info) in enumerate(top_users, 1):
+        text += f"{i}. {info['name']} - Level {info['level']}\n"
     await update.message.reply_text(text)
 
-# 🚀 ران کردن ربات
+# شمارش پیام برای لول آپ
+async def message_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.message.from_user
+    new_level = add_xp(user.id, user.first_name)
+    if new_level:
+        await update.message.reply_text(f"🎉 تبریک {user.first_name}! شما لول {new_level} شدید! 🚀")
+
+# ساخت اپلیکیشن
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("leaderboard", leaderboard))
+app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_counter))
+
+# Webhook
 if __name__ == "__main__":
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, level_system))
-    app.add_handler(CommandHandler("leaderboard", leaderboard))
-    app.add_handler(MessageHandler(filters.Regex("(?i)لیدربرد"), leaderboard))
-    print("🤖 ربات روشن شد و آماده ترکوندن گپ‌هاست!")
-    app.run_polling()
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=TOKEN,
+        webhook_url=WEBHOOK_URL
+    )
