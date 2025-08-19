@@ -34,12 +34,16 @@ async def level_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if row:
         messages = row[0] + 1
-        cursor.execute("UPDATE users SET messages=?, username=? WHERE chat_id=? AND user_id=?", 
-                       (messages, username, chat_id, user_id))
+        cursor.execute(
+            "UPDATE users SET messages=?, username=? WHERE chat_id=? AND user_id=?",
+            (messages, username, chat_id, user_id)
+        )
     else:
         messages = 1
-        cursor.execute("INSERT INTO users (chat_id, user_id, username, messages) VALUES (?, ?, ?, ?)", 
-                       (chat_id, user_id, username, messages))
+        cursor.execute(
+            "INSERT INTO users (chat_id, user_id, username, messages) VALUES (?, ?, ?, ?)",
+            (chat_id, user_id, username, messages)
+        )
     conn.commit()
 
     # چک کردن لول
@@ -56,8 +60,28 @@ async def level_system(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🏆 دستور لیدربرد
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.message.chat_id
-    cursor.execute("SELECT username, messages FROM users WHERE chat_id=? ORDER BY messages DESC LIMIT 10", (chat_id,))
+    cursor.execute(
+        "SELECT username, messages FROM users WHERE chat_id=? ORDER BY messages DESC LIMIT 10",
+        (chat_id,)
+    )
     rows = cursor.fetchall()
 
     if not rows:
-        await update.message.reply_text("📭 هنوز کسی تو_
+        await update.message.reply_text("📭 هنوز کسی تو این گپ فعالیت نکرده!")
+        return
+
+    text = "👑🏆 لیدربرد تاپ 10 بازیکن گپ 🏆👑\n⚡ اینا غولای چت هستن ⚡\n\n"
+    for i, (username, messages) in enumerate(rows, start=1):
+        level = messages // 10
+        text += f"{i}. ✨ @{username} → 🌟 لول {level}\n"
+
+    await update.message.reply_text(text)
+
+# 🚀 ران کردن ربات
+if __name__ == "__main__":
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, level_system))
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
+    app.add_handler(MessageHandler(filters.Regex("(?i)لیدربرد"), leaderboard))
+    print("🤖 ربات روشن شد و آماده ترکوندن گپ‌هاست!")
+    app.run_polling()
