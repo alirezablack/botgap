@@ -1,77 +1,79 @@
+# bot.py
 import os
 import psycopg2
-from telegram.ext import Updater, MessageHandler, Filters, CommandHandler
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
-TOKEN = os.getenv("BOT_TOKEN")
-DB_URL = os.getenv("DATABASE_URL")
+# دریافت متغیرهای محیطی
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+DATABASE_URL = os.environ["DATABASE_URL"]
+WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+PORT = int(os.environ.get("PORT", 10000))
 
 # اتصال به دیتابیس
-conn = psycopg2.connect(DB_URL)
+conn = psycopg2.connect(DATABASE_URL)
 cur = conn.cursor()
 
-# ساخت جدول اگه وجود نداشت
+# ایجاد جدول اگر وجود نداشته باشد
 cur.execute("""
 CREATE TABLE IF NOT EXISTS users (
-    chat_id BIGINT,
-    user_id BIGINT,
+    user_id BIGINT PRIMARY KEY,
     username TEXT,
-    level INT DEFAULT 0,
-    PRIMARY KEY (chat_id, user_id)
+    level INT DEFAULT 1
 )
 """)
 conn.commit()
 
-# افزایش لول وقتی کسی پیام میده
-def increase_level(update, context):
-    user = update.effective_user
-    chat = update.effective_chat
+# تابع شروع ربات
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "سلام! این یه ربات نمایش لول‌های کاربرای گپه.\n"
+        "کافیه اد کنی گپت!\n"
+        "با /leaderboard یا /لیدر برد لیست کاربران برتر رو ببین.\n"
+        "سازنده ربات: @black_bigbang"
+    )
 
-    cur.execute("""
-        INSERT INTO users (chat_id, user_id, username, level)
-        VALUES (%s, %s, %s, 1)
-        ON CONFLICT (chat_id, user_id)
-        DO UPDATE SET level = users.level + 1
-    """, (chat.id, user.id, user.username or "بدون‌اسم"))
+# اضافه کردن کاربر جدید یا آپدیت کردن یوزرنیم
+def add_or_update_user(user_id, username):
+    cur.execute("INSERT INTO users (user_id, username) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET username = EXCLUDED.username", (user_id, username))
     conn.commit()
 
-# لیدر برد فقط همون گروه
-def leaderboard(update, context):
-    chat = update.effective_chat
-    cur.execute("SELECT username, level FROM users WHERE chat_id=%s ORDER BY level DESC LIMIT 10", (chat.id,))
-    rows = cur.fetchall()
-
-    text = "🏆 لیدربورد گروه:\n\n"
-    for i, row in enumerate(rows, start=1):
-        text += f"{i}. {row[0]} — {row[1]} لول\n"
-    update.message.reply_text(text)
-
-# لیدر برد جهانی (کل گروه‌ها)
-def global_leaderboard(update, context):
+# تابع نمایش لیدر برد محلی (همان گپ)
+async def leaderboard_local(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    # اینجا فقط کاربران پیام داده توی همون گپ بررسی میشه
     cur.execute("SELECT username, level FROM users ORDER BY level DESC LIMIT 10")
-    rows = cur.fetchall()
+    top_users = cur.fetchall()
+    text = "🏆 لیدر برد این گپ:\n\n"
+    for i, (username, level) in enumerate(top_users, 1):
+        text += f"{i}. {username} - Level {level}\n"
+    await update.message.reply_text(text)
 
-    text = "🌍 لیدربورد جهانی:\n\n"
-    for i, row in enumerate(rows, start=1):
-        text += f"{i}. {row[0]} — {row[1]} لول\n"
-    update.message.reply_text(text)
+# تابع نمایش لیدر برد جهانی
+async def leaderboard_global(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cur.execute("SELECT username, level FROM users ORDER BY level DESC LIMIT 10")
+    top_users = cur.fetchall()
+    text = "🌐 لیدر برد جهانی:\n\n"
+    for i, (username, level) in enumerate(top_users, 1):
+        text += f"{i}. {username} - Level {level}\n"
+    await update.message.reply_text(text)
 
-def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+# اضافه کردن هندرها
+app = Application.builder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler(["leaderboard", "لیدر برد"], leaderboard_local))
+app.add_handler(CommandHandler(["leaderboard_global", "لیدر برد جهانی"], leaderboard_global))
 
-    # افزایش لول با هر پیام
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, increase_level))
+# هر پیام کاربر رو برای ثبت یا آپدیت در دیتابیس بررسی می‌کنیم
+async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    add_or_update_user(user.id, user.username or user.full_name)
 
-    # دستور انگلیسی
-    dp.add_handler(CommandHandler("leaderboard", leaderboard))
-    dp.add_handler(CommandHandler("global_leaderboard", global_leaderboard))
+app.add_handler(CommandHandler(None, register_user))  # هر پیام
 
-    # دستور فارسی
-    dp.add_handler(MessageHandler(Filters.regex(r'^(لیدر برد)$'), leaderboard))
-    dp.add_handler(MessageHandler(Filters.regex(r'^(لیدر برد جهانی)$'), global_leaderboard))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
+# وبهوک روی Render
+app.run_webhook(
+    listen="0.0.0.0",
+    port=PORT,
+    webhook_url=WEBHOOK_URL
+)
