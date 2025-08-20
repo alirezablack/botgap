@@ -1,7 +1,11 @@
 import os
 import psycopg2
+
+# جایگزینی imghdr با imghdr3 برای Python 3.13
+import imghdr3 as imghdr
+
 from telegram import Update
-from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
+from telegram.ext import Updater, MessageHandler, CallbackContext, Filters
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -66,4 +70,3 @@ dispatcher.add_handler(handler)
 
 updater.start_polling()
 updater.idle()
-
