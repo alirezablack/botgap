@@ -1,11 +1,7 @@
-python-telegram-bot==13.15
+python-telegram-bot==20.4
 psycopg2-binary==2.9.10
-APScheduler==3.6.3
+APScheduler==3.9.1
 pytz==2025.2
 tzlocal==5.3.1
 cachetools==4.2.2
-tornado==6.1
-six==1.17.0
-setuptools==80.9.0
-certifi==2025.8.3
-urllib3==2.0.5
+tornado==6.3
