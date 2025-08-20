@@ -2,7 +2,6 @@ import os
 import psycopg2
 from telegram import Update
 from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
-import imghdr3  # جایگزین imghdr قدیمی
 
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 DATABASE_URL = os.environ.get("DATABASE_URL")
