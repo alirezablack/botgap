@@ -1,65 +1,77 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
-
-# توکن ربات مستقیم
-TOKEN = "7981388986:AAE3xI26bTu7WJjTa9vx_svYrfVHbqBE4RU"  # ← اینو با توکن خودت عوض کن
-
-# URL ربات روی Render
-WEBHOOK_URL = f"https://my-levelup-bot.onrender.com/{TOKEN}"
-
-# پورت Render
 import os
-PORT = int(os.environ.get("PORT", 5000))
+import psycopg2
+from telegram.ext import Updater, MessageHandler, Filters, CommandHandler
 
-# دیتابیس ساده لول ها
-users = {}  # ساختار: {user_id: {"name": username, "xp": 0, "level": 1}}
+TOKEN = os.getenv("BOT_TOKEN")
+DB_URL = os.getenv("DATABASE_URL")
 
-LEVEL_XP = 10  # هر 10 پیام، لول آپ
+# اتصال به دیتابیس
+conn = psycopg2.connect(DB_URL)
+cur = conn.cursor()
 
-# تابع برای لول آپ
-def add_xp(user_id, username):
-    if user_id not in users:
-        users[user_id] = {"name": username, "xp": 0, "level": 1}
-    users[user_id]["xp"] += 1
-    if users[user_id]["xp"] >= LEVEL_XP:
-        users[user_id]["level"] += 1
-        users[user_id]["xp"] = 0
-        return users[user_id]["level"]
-    return None
+# ساخت جدول اگه وجود نداشت
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users (
+    chat_id BIGINT,
+    user_id BIGINT,
+    username TEXT,
+    level INT DEFAULT 0,
+    PRIMARY KEY (chat_id, user_id)
+)
+""")
+conn.commit()
 
-# دستورات ربات
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("سلام! ربات Level Up فعال شد 😎")
+# افزایش لول وقتی کسی پیام میده
+def increase_level(update, context):
+    user = update.effective_user
+    chat = update.effective_chat
 
-async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not users:
-        await update.message.reply_text("🏆 هنوز کسی فعالیت نداشته!")
-        return
-    # مرتب سازی بر اساس level
-    top_users = sorted(users.items(), key=lambda x: x[1]["level"], reverse=True)[:10]
-    text = "🏆 لیدربرد ۱۰ نفر برتر:\n\n"
-    for i, (uid, info) in enumerate(top_users, 1):
-        text += f"{i}. {info['name']} - Level {info['level']}\n"
-    await update.message.reply_text(text)
+    cur.execute("""
+        INSERT INTO users (chat_id, user_id, username, level)
+        VALUES (%s, %s, %s, 1)
+        ON CONFLICT (chat_id, user_id)
+        DO UPDATE SET level = users.level + 1
+    """, (chat.id, user.id, user.username or "بدون‌اسم"))
+    conn.commit()
 
-# شمارش پیام برای لول آپ
-async def message_counter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    new_level = add_xp(user.id, user.first_name)
-    if new_level:
-        await update.message.reply_text(f"🎉 تبریک {user.first_name}! شما لول {new_level} شدید! 🚀")
+# لیدر برد فقط همون گروه
+def leaderboard(update, context):
+    chat = update.effective_chat
+    cur.execute("SELECT username, level FROM users WHERE chat_id=%s ORDER BY level DESC LIMIT 10", (chat.id,))
+    rows = cur.fetchall()
 
-# ساخت اپلیکیشن
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CommandHandler("leaderboard", leaderboard))
-app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_counter))
+    text = "🏆 لیدربورد گروه:\n\n"
+    for i, row in enumerate(rows, start=1):
+        text += f"{i}. {row[0]} — {row[1]} لول\n"
+    update.message.reply_text(text)
 
-# Webhook
+# لیدر برد جهانی (کل گروه‌ها)
+def global_leaderboard(update, context):
+    cur.execute("SELECT username, level FROM users ORDER BY level DESC LIMIT 10")
+    rows = cur.fetchall()
+
+    text = "🌍 لیدربورد جهانی:\n\n"
+    for i, row in enumerate(rows, start=1):
+        text += f"{i}. {row[0]} — {row[1]} لول\n"
+    update.message.reply_text(text)
+
+def main():
+    updater = Updater(TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    # افزایش لول با هر پیام
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, increase_level))
+
+    # دستور انگلیسی
+    dp.add_handler(CommandHandler("leaderboard", leaderboard))
+    dp.add_handler(CommandHandler("global_leaderboard", global_leaderboard))
+
+    # دستور فارسی
+    dp.add_handler(MessageHandler(Filters.regex(r'^(لیدر برد)$'), leaderboard))
+    dp.add_handler(MessageHandler(Filters.regex(r'^(لیدر برد جهانی)$'), global_leaderboard))
+
+    updater.start_polling()
+    updater.idle()
+
 if __name__ == "__main__":
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=TOKEN,
-        webhook_url=WEBHOOK_URL
-    )
+    main()
